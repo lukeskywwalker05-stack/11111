@@ -1,0 +1,643 @@
+#!/usr/bin/env bash
+# create_release.sh
+# Creates a ready-to-publish DJ-NOTES project directory and a zip archive.
+# Usage:
+#   1) Save this file locally (or paste into a terminal on mobile/linux).
+#   2) chmod +x create_release.sh
+#   3) ./create_release.sh
+#
+# Optional automated git push:
+#   Set PUSH_TO_GIT=1 and GIT_REMOTE="https://<token>@github.com/owner/repo.git"
+#   then run: PUSH_TO_GIT=1 GIT_REMOTE="https://..." ./create_release.sh
+#
+set -euo pipefail
+
+PROJECT_DIR="dj-notes"
+ZIP_NAME="dj-notes-release.zip"
+
+echo "Creating project in ./${PROJECT_DIR} ..."
+
+rm -rf "$PROJECT_DIR"
+mkdir -p "$PROJECT_DIR/.github/workflows"
+
+# index.html
+cat > "$PROJECT_DIR/index.html" <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DJ NOTES</title>
+  <meta name="description" content="A small, secure, and polished DJ notes app — save quick notes and playlist links." />
+
+  <!-- Hacker Font (recommended to self-host in production) -->
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app" id="app">
+    <header class="app-header">
+      <h1 class="title">DJ NOTES <span class="dot" aria-hidden="true">🟢</span></h1>
+      <p class="subtitle">Drop quick notes and playlist links — saved locally on this device.</p>
+    </header>
+
+    <section class="board" aria-labelledby="board-heading">
+      <h2 id="board-heading" class="visually-hidden">Notes</h2>
+
+      <form id="noteForm" class="note-form" novalidate>
+        <label for="noteText" class="visually-hidden">Note text</label>
+        <textarea id="noteText" name="noteText" rows="2" placeholder="Drop a DJ note…" required aria-required="true"></textarea>
+
+        <label for="playlistLink" class="visually-hidden">Playlist link</label>
+        <input id="playlistLink" name="playlistLink" type="url" inputmode="url" placeholder="Playlist link (optional)" aria-label="Playlist link (optional)"/>
+
+        <div class="form-actions">
+          <button type="submit" id="postBtn" class="btn primary">POST</button>
+          <button type="button" id="clearBtn" class="btn ghost" title="Clear all notes">Clear all</button>
+        </div>
+
+        <p id="formError" class="error" role="alert" aria-live="assertive" hidden></p>
+      </form>
+
+      <div id="notes" class="notes" aria-live="polite" aria-relevant="additions removals"></div>
+    </section>
+
+    <footer class="app-footer">
+      <small>Notes are stored only in your browser (localStorage).</small>
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
+HTML
+
+# style.css
+cat > "$PROJECT_DIR/style.css" <<'CSS'
+:root{
+  --bg: #000;
+  --accent: #00ff88;
+  --accent-2: #00ffaa;
+  --card-bg: rgba(0,0,0,0.35);
+  --radius: 8px;
+  --max-width: 720px;
+  --mono: "Share Tech Mono", monospace;
+}
+
+*{box-sizing:border-box}
+html,body,#app{height:100%}
+body{
+  margin:0;
+  font-family:var(--mono);
+  background: linear-gradient(180deg, #000 0%, #031006 100%);
+  color:var(--accent);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:28px;
+}
+
+.app{
+  width:100%;
+  max-width:var(--max-width);
+}
+
+.app-header{
+  text-align:center;
+  margin-bottom:18px;
+}
+
+.title{
+  margin:0;
+  font-size:28px;
+  letter-spacing:3px;
+}
+
+.subtitle{
+  margin:6px 0 0;
+  font-size:13px;
+  color:var(--accent);
+  opacity:0.8;
+}
+
+.board{
+  margin-top:14px;
+}
+
+.note-form{
+  background:var(--card-bg);
+  border:1px solid rgba(0,255,136,0.08);
+  padding:14px;
+  border-radius:var(--radius);
+  display:grid;
+  gap:8px;
+}
+
+textarea, input[type="url"]{
+  width:100%;
+  background:transparent;
+  border:1px solid rgba(0,255,136,0.12);
+  color:var(--accent);
+  padding:10px;
+  border-radius:6px;
+  resize:vertical;
+  font-family:inherit;
+  font-size:14px;
+}
+
+textarea::placeholder,
+input::placeholder{color:rgba(0,255,136,0.28)}
+
+.form-actions{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  justify-content:flex-end;
+}
+
+.btn{
+  font-family:inherit;
+  border-radius:6px;
+  padding:8px 12px;
+  border:1px solid rgba(0,255,136,0.12);
+  background:transparent;
+  color:var(--accent);
+  cursor:pointer;
+}
+
+.btn.primary{
+  background:linear-gradient(90deg, rgba(0,255,136,0.06), rgba(0,255,170,0.03));
+  border-color:var(--accent);
+  font-weight:600;
+}
+
+.btn.ghost{
+  opacity:0.8;
+}
+
+.btn:focus{
+  outline:3px solid rgba(0,255,136,0.12);
+  outline-offset:2px;
+}
+
+.error{
+  color:#ff6b6b;
+  font-size:13px;
+  margin:0;
+}
+
+.notes{
+  margin-top:14px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.note{
+  background:linear-gradient(180deg, rgba(0,0,0,0.5), rgba(0,0,0,0.36));
+  border:1px solid rgba(0,255,136,0.06);
+  padding:12px;
+  border-radius:8px;
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  justify-content:space-between;
+}
+
+.note-content{
+  flex:1;
+  min-width:0;
+}
+
+.note-text{
+  margin:0 0 8px 0;
+  color:var(--accent);
+  white-space:pre-wrap;
+  word-break:break-word;
+  font-size:14px;
+}
+
+.note-meta{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  font-size:12px;
+  color:var(--accent);
+  opacity:0.9;
+}
+
+.note-actions{
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+
+.icon-btn{
+  background:transparent;
+  border:1px solid rgba(0,255,136,0.06);
+  color:var(--accent-2);
+  padding:6px;
+  border-radius:6px;
+  cursor:pointer;
+  font-size:13px;
+}
+
+.icon-btn:focus{outline:3px solid rgba(0,255,136,0.08); outline-offset:2px}
+
+.note-link{
+  color:var(--accent-2);
+  text-decoration:none;
+  border-bottom:1px dashed rgba(0,255,170,0.12);
+  padding-bottom:2px;
+}
+
+.timestamp{opacity:0.6; font-size:12px}
+
+.visually-hidden{
+  position:absolute !important;
+  height:1px;width:1px;
+  overflow:hidden;clip:rect(1px,1px,1px,1px);
+  white-space:nowrap;border:0;padding:0;margin:-1px;
+}
+
+/* Responsive */
+@media (max-width:520px){
+  .note{flex-direction:column; align-items:stretch}
+  .form-actions{justify-content:space-between}
+}
+CSS
+
+# script.js
+cat > "$PROJECT_DIR/script.js" <<'JS'
+// DJ NOTES — polished, accessible, secure (vanilla JS)
+const STORAGE_KEY = 'dj-notes:v1';
+
+const noteForm = document.getElementById('noteForm');
+const noteTextEl = document.getElementById('noteText');
+const playlistLinkEl = document.getElementById('playlistLink');
+const notesContainer = document.getElementById('notes');
+const formError = document.getElementById('formError');
+const clearBtn = document.getElementById('clearBtn');
+
+let notes = loadNotes();
+renderNotes();
+
+// Helpers
+function loadNotes(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){
+    console.error('Failed to parse notes from storage', e);
+    return [];
+  }
+}
+
+function saveNotes(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+  }catch(e){
+    console.error('Failed to save notes', e);
+  }
+}
+
+function nowISO(){ return new Date().toISOString(); }
+
+function formatTimestamp(iso){
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+function clearError(){
+  formError.hidden = true;
+  formError.textContent = '';
+}
+
+function showError(msg){
+  formError.hidden = false;
+  formError.textContent = msg;
+}
+
+// Validate / normalize URL: attempt to add https:// if protocol missing
+function normalizeUrl(val){
+  if(!val) return '';
+  try{
+    return new URL(val).toString();
+  }catch(e){
+    try{
+      return new URL('https://' + val).toString();
+    }catch(e2){
+      return null;
+    }
+  }
+}
+
+// Rendering (DOM safe)
+function renderNotes(){
+  notesContainer.innerHTML = '';
+  if(notes.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'note';
+    empty.style.justifyContent = 'center';
+    empty.textContent = 'No notes yet — post one above.';
+    notesContainer.appendChild(empty);
+    return;
+  }
+
+  notes.forEach(note => {
+    const item = document.createElement('article');
+    item.className = 'note';
+    item.setAttribute('data-id', note.id);
+
+    const content = document.createElement('div');
+    content.className = 'note-content';
+
+    const text = document.createElement('p');
+    text.className = 'note-text';
+    text.textContent = note.text;
+
+    const meta = document.createElement('div');
+    meta.className = 'note-meta';
+
+    const ts = document.createElement('span');
+    ts.className = 'timestamp';
+    ts.textContent = formatTimestamp(note.createdAt);
+
+    meta.appendChild(ts);
+
+    if(note.link){
+      const link = document.createElement('a');
+      link.className = 'note-link';
+      link.href = note.link;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = '▶ PLAY';
+      link.setAttribute('aria-label', 'Open playlist in new tab');
+      meta.appendChild(link);
+    }
+
+    content.appendChild(text);
+    content.appendChild(meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'note-actions';
+
+    // Edit button
+    const editBtn = document.createElement('button');
+    editBtn.className = 'icon-btn';
+    editBtn.type = 'button';
+    editBtn.title = 'Edit note';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', () => startEdit(note.id));
+    actions.appendChild(editBtn);
+
+    // Delete button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'icon-btn';
+    delBtn.type = 'button';
+    delBtn.title = 'Delete note';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => deleteNote(note.id));
+    actions.appendChild(delBtn);
+
+    item.appendChild(content);
+    item.appendChild(actions);
+    notesContainer.appendChild(item);
+  });
+}
+
+// CRUD
+noteForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  clearError();
+
+  const text = noteTextEl.value.trim();
+  const rawLink = playlistLinkEl.value.trim();
+
+  if(!text){
+    showError('Note text cannot be empty.');
+    noteTextEl.focus();
+    return;
+  }
+
+  const normalizedLink = rawLink ? normalizeUrl(rawLink) : '';
+
+  if(rawLink && !normalizedLink){
+    showError('Playlist link looks invalid. Try a full URL or a domain (e.g., example.com).');
+    playlistLinkEl.focus();
+    return;
+  }
+
+  const note = {
+    id: uid(),
+    text,
+    link: normalizedLink || '',
+    createdAt: nowISO()
+  };
+
+  notes.unshift(note);
+  saveNotes();
+  renderNotes();
+
+  noteForm.reset();
+  noteTextEl.focus();
+});
+
+clearBtn.addEventListener('click', () => {
+  if(!notes.length) return;
+  if(!confirm('Clear all notes? This cannot be undone.')) return;
+  notes = [];
+  saveNotes();
+  renderNotes();
+});
+
+function deleteNote(id){
+  const idx = notes.findIndex(n => n.id === id);
+  if(idx === -1) return;
+  if(!confirm('Delete this note?')) return;
+  notes.splice(idx,1);
+  saveNotes();
+  renderNotes();
+}
+
+function startEdit(id){
+  const idx = notes.findIndex(n => n.id === id);
+  if(idx === -1) return;
+  const note = notes[idx];
+
+  const article = notesContainer.querySelector(`.note[data-id="${id}"]`);
+  if(!article) return;
+
+  const editForm = document.createElement('form');
+  editForm.className = 'note';
+  editForm.style.alignItems = 'stretch';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'note-content';
+
+  const ta = document.createElement('textarea');
+  ta.rows = 3;
+  ta.value = note.text;
+  ta.style.width = '100%';
+  ta.style.background = 'transparent';
+  ta.style.border = '1px solid rgba(0,255,136,0.08)';
+  ta.style.color = 'var(--accent)';
+  ta.style.padding = '8px';
+  ta.style.borderRadius = '6px';
+  ta.style.fontFamily = 'inherit';
+  ta.style.fontSize = '14px';
+
+  const inputUrl = document.createElement('input');
+  inputUrl.type = 'url';
+  inputUrl.value = note.link || '';
+  inputUrl.placeholder = 'Playlist link (optional)';
+  inputUrl.style.width = '100%';
+  inputUrl.style.marginTop = '8px';
+  inputUrl.style.background = 'transparent';
+  inputUrl.style.border = '1px solid rgba(0,255,136,0.08)';
+  inputUrl.style.color = 'var(--accent)';
+  inputUrl.style.padding = '8px';
+  inputUrl.style.borderRadius = '6px';
+
+  wrapper.appendChild(ta);
+  wrapper.appendChild(inputUrl);
+
+  const actionWrap = document.createElement('div');
+  actionWrap.className = 'note-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'icon-btn';
+  saveBtn.textContent = 'Save';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'icon-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => renderNotes());
+
+  actionWrap.appendChild(saveBtn);
+  actionWrap.appendChild(cancelBtn);
+
+  editForm.appendChild(wrapper);
+  editForm.appendChild(actionWrap);
+
+  article.replaceWith(editForm);
+  ta.focus();
+
+  editForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const newText = ta.value.trim();
+    const rawLink = inputUrl.value.trim();
+
+    if(!newText){
+      alert('Note text cannot be empty.');
+      ta.focus();
+      return;
+    }
+
+    const normalized = rawLink ? normalizeUrl(rawLink) : '';
+    if(rawLink && !normalized){
+      alert('Playlist link looks invalid.');
+      inputUrl.focus();
+      return;
+    }
+
+    notes[idx].text = newText;
+    notes[idx].link = normalized || '';
+    notes[idx].createdAt = nowISO();
+    saveNotes();
+    renderNotes();
+  });
+}
+JS
+
+# README.md
+cat > "$PROJECT_DIR/README.md" <<'MD'
+# DJ NOTES
+
+Simple, secure client-side note app for DJs. Notes are stored locally in browser `localStorage`. Perfect for quick playlists and session notes.
+
+How to deploy (GitHub Pages)
+1. Create a GitHub repo and add the files in this repo root (or upload the zip).
+2. In repo Settings → Pages, set Source to `main` branch and `/ (root)`.
+3. Wait a minute — site will be live at `https://<username>.github.io/<repo>`.
+
+Security & Production tips
+- Self-host the font and remove external Google Fonts dependency for stricter CSP.
+- If you need server persistence, add an authenticated API behind your company SSO.
+- For enterprise CDN + TLS, deploy to S3 + CloudFront and use the CloudFront distribution as the public endpoint.
+MD
+
+# .nojekyll
+cat > "$PROJECT_DIR/.nojekyll" <<'NOJ'
+# Prevent GitHub Pages from running Jekyll
+NOJ
+
+# Optional CNAME (leave empty)
+cat > "$PROJECT_DIR/CNAME" <<'CNAME'
+# Example: notes.example.com
+CNAME
+
+# GitHub Actions workflow for auto-deploy to GitHub Pages (optional)
+cat > "$PROJECT_DIR/.github/workflows/deploy-gh-pages.yml" <<'YML'
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./
+YML
+
+# Create ZIP
+echo "Creating zip ${ZIP_NAME} ..."
+rm -f "$ZIP_NAME"
+command -v zip >/dev/null 2>&1 || { echo "zip command not found — please install zip to create an archive, or skip zip step."; }
+if command -v zip >/dev/null 2>&1; then
+  (cd "$PROJECT_DIR" && zip -r "../$ZIP_NAME" .) >/dev/null
+  echo "Created $ZIP_NAME"
+else
+  echo "Skipping zip creation — run 'zip -r $ZIP_NAME $PROJECT_DIR' manually when zip is available."
+fi
+
+echo "Project created: ./$PROJECT_DIR"
+echo "Files written:"
+find "$PROJECT_DIR" -maxdepth 2 -type f -printf " - %P\n"
+
+cat <<'INFO'
+
+Next steps:
+- Upload the contents of the ./dj-notes folder to a new GitHub repository via mobile web:
+  * In your repo: Add file → Upload files → choose files from the dj-notes folder, or use the web editor to create each file.
+  * Or unzip dj-notes-release.zip and upload via desktop.
+
+Optional auto-push (UNSAFE OPTIONAL):
+- To let this script push to a remote repo automatically you can set:
+    PUSH_TO_GIT=1
+    GIT_REMOTE="https://<token>@github.com/owner/repo.git"
+  Then re-run the script. This will init a git repo, commit and push main. Use a token with repo permissions and keep it secret.
+
+If you want a version tailored to perform an automatic git push or an S3 deploy, tell me and I will add that mode.
+INFO
+
+exit 0
